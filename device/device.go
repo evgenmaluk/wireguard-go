@@ -117,6 +117,8 @@ type Device struct {
 		outboundElements          *WaitPool
 	}
 
+	preallocatedBuffersPerPool uint32
+
 	queue struct {
 		encryption *outboundQueue
 		decryption *inboundQueue
@@ -328,9 +330,11 @@ func (device *Device) SetPrivateKey(sk NoisePrivateKey) error {
 	return nil
 }
 
-func NewDevice(ctx context.Context, tunDevice tun.Device, bind conn.Bind, logger *Logger, workers int) *Device {
+func NewDevice(ctx context.Context, tunDevice tun.Device, bind conn.Bind, logger *Logger, workers int, preallocatedBuffersPerPool uint32, disablePauses bool) *Device {
 	device := new(Device)
-	device.pauseManager = service.FromContext[pause.Manager](ctx)
+	if !disablePauses {
+		device.pauseManager = service.FromContext[pause.Manager](ctx)
+	}
 	device.state.state.Store(uint32(deviceStateDown))
 	device.closed = make(chan struct{})
 	device.log = logger
@@ -346,6 +350,11 @@ func NewDevice(ctx context.Context, tunDevice tun.Device, bind conn.Bind, logger
 	device.rate.limiter.Init()
 	device.indexTable.Init()
 
+	if preallocatedBuffersPerPool > 0 {
+		device.preallocatedBuffersPerPool = preallocatedBuffersPerPool
+	} else {
+		device.preallocatedBuffersPerPool = PreallocatedBuffersPerPool
+	}
 	device.PopulatePools()
 
 	// create queues
