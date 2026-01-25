@@ -204,12 +204,18 @@ func (device *Device) CreateMessageInitiation(peer *Peer) (*MessageInitiation, e
 
 	handshake.mixHash(handshake.remoteStatic[:])
 
-	device.awg.ASecMux.RLock()
+	device.awg.Mux.RLock()
+	msgType, err := device.awg.GetMsgType(DefaultMessageInitiationType)
+	if err != nil {
+		device.awg.Mux.RUnlock()
+		return nil, fmt.Errorf("get message type: %w", err)
+	}
+
 	msg := MessageInitiation{
-		Type:      MessageInitiationType,
+		Type:      msgType,
 		Ephemeral: handshake.localEphemeral.publicKey(),
 	}
-	device.awg.ASecMux.RUnlock()
+	device.awg.Mux.RUnlock()
 
 	handshake.mixKey(msg.Ephemeral[:])
 	handshake.mixHash(msg.Ephemeral[:])
@@ -263,12 +269,13 @@ func (device *Device) ConsumeMessageInitiation(msg *MessageInitiation) *Peer {
 		chainKey [blake2s.Size]byte
 	)
 
-	device.awg.ASecMux.RLock()
+	device.awg.Mux.RLock()
+
 	if msg.Type != MessageInitiationType {
-		device.awg.ASecMux.RUnlock()
+		device.awg.Mux.RUnlock()
 		return nil
 	}
-	device.awg.ASecMux.RUnlock()
+	device.awg.Mux.RUnlock()
 
 	device.staticIdentity.RLock()
 	defer device.staticIdentity.RUnlock()
@@ -383,9 +390,14 @@ func (device *Device) CreateMessageResponse(peer *Peer) (*MessageResponse, error
 	}
 
 	var msg MessageResponse
-	device.awg.ASecMux.RLock()
-	msg.Type = MessageResponseType
-	device.awg.ASecMux.RUnlock()
+	device.awg.Mux.RLock()
+	msg.Type, err = device.awg.GetMsgType(DefaultMessageResponseType)
+	if err != nil {
+		device.awg.Mux.RUnlock()
+		return nil, fmt.Errorf("get message type: %w", err)
+	}
+
+	device.awg.Mux.RUnlock()
 	msg.Sender = handshake.localIndex
 	msg.Receiver = handshake.remoteIndex
 
@@ -435,12 +447,13 @@ func (device *Device) CreateMessageResponse(peer *Peer) (*MessageResponse, error
 }
 
 func (device *Device) ConsumeMessageResponse(msg *MessageResponse) *Peer {
-	device.awg.ASecMux.RLock()
+	device.awg.Mux.RLock()
+
 	if msg.Type != MessageResponseType {
-		device.awg.ASecMux.RUnlock()
+		device.awg.Mux.RUnlock()
 		return nil
 	}
-	device.awg.ASecMux.RUnlock()
+	device.awg.Mux.RUnlock()
 
 	// lookup handshake by receiver
 
