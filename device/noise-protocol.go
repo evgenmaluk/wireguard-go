@@ -52,17 +52,11 @@ const (
 )
 
 const (
-	DefaultMessageInitiationType  uint32 = 1
-	DefaultMessageResponseType    uint32 = 2
-	DefaultMessageCookieReplyType uint32 = 3
-	DefaultMessageTransportType   uint32 = 4
-)
-
-var (
-	MessageInitiationType  uint32 = DefaultMessageInitiationType
-	MessageResponseType    uint32 = DefaultMessageResponseType
-	MessageCookieReplyType uint32 = DefaultMessageCookieReplyType
-	MessageTransportType   uint32 = DefaultMessageTransportType
+	MessageUnknownType     uint32 = 0
+	MessageInitiationType  uint32 = 1
+	MessageResponseType    uint32 = 2
+	MessageCookieReplyType uint32 = 3
+	MessageTransportType   uint32 = 4
 )
 
 const (
@@ -79,11 +73,6 @@ const (
 	MessageTransportOffsetReceiver = 4
 	MessageTransportOffsetCounter  = 8
 	MessageTransportOffsetContent  = 16
-)
-
-var (
-	packetSizeToMsgType map[int]uint32
-	msgTypeToJunkSize   map[uint32]int
 )
 
 /* Type is an 8-bit field, followed by 3 nul bytes,
@@ -135,7 +124,7 @@ type Handshake struct {
 	localEphemeral            NoisePrivateKey          // ephemeral secret key
 	localIndex                uint32                   // used to clear hash-table
 	remoteIndex               uint32                   // index for sending
-	remoteStatic              NoisePublicKey           // long term key, never changes, can be accessed without mutex
+	remoteStatic              NoisePublicKey           // long term key
 	remoteEphemeral           NoisePublicKey           // ephemeral public key
 	precomputedStaticStatic   [NoisePublicKeySize]byte // precomputed shared secret
 	lastTimestamp             tai64n.Timestamp
@@ -204,18 +193,12 @@ func (device *Device) CreateMessageInitiation(peer *Peer) (*MessageInitiation, e
 
 	handshake.mixHash(handshake.remoteStatic[:])
 
-	device.awg.Mux.RLock()
-	msgType, err := device.awg.GetMsgType(DefaultMessageInitiationType)
-	if err != nil {
-		device.awg.Mux.RUnlock()
-		return nil, fmt.Errorf("get message type: %w", err)
-	}
+	msgType := device.headers.init.Generate()
 
 	msg := MessageInitiation{
 		Type:      msgType,
 		Ephemeral: handshake.localEphemeral.publicKey(),
 	}
-	device.awg.Mux.RUnlock()
 
 	handshake.mixKey(msg.Ephemeral[:])
 	handshake.mixHash(msg.Ephemeral[:])
@@ -269,13 +252,9 @@ func (device *Device) ConsumeMessageInitiation(msg *MessageInitiation) *Peer {
 		chainKey [blake2s.Size]byte
 	)
 
-	device.awg.Mux.RLock()
-
 	if msg.Type != MessageInitiationType {
-		device.awg.Mux.RUnlock()
 		return nil
 	}
-	device.awg.Mux.RUnlock()
 
 	device.staticIdentity.RLock()
 	defer device.staticIdentity.RUnlock()
@@ -390,14 +369,7 @@ func (device *Device) CreateMessageResponse(peer *Peer) (*MessageResponse, error
 	}
 
 	var msg MessageResponse
-	device.awg.Mux.RLock()
-	msg.Type, err = device.awg.GetMsgType(DefaultMessageResponseType)
-	if err != nil {
-		device.awg.Mux.RUnlock()
-		return nil, fmt.Errorf("get message type: %w", err)
-	}
-
-	device.awg.Mux.RUnlock()
+	msg.Type = device.headers.response.Generate()
 	msg.Sender = handshake.localIndex
 	msg.Receiver = handshake.remoteIndex
 
@@ -447,13 +419,9 @@ func (device *Device) CreateMessageResponse(peer *Peer) (*MessageResponse, error
 }
 
 func (device *Device) ConsumeMessageResponse(msg *MessageResponse) *Peer {
-	device.awg.Mux.RLock()
-
 	if msg.Type != MessageResponseType {
-		device.awg.Mux.RUnlock()
 		return nil
 	}
-	device.awg.Mux.RUnlock()
 
 	// lookup handshake by receiver
 
