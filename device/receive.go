@@ -609,6 +609,12 @@ func (device *Device) DeterminePacketTypeAndPadding(packet []byte, expectedType 
 				return MessageTransportType, padding
 			}
 		}
+
+		if padding > 0 && size >= MessageTransportHeaderSize {
+			if header.Validate(binary.LittleEndian.Uint32(packet)) {
+				return MessageTransportType, 0
+			}
+		}
 	}
 
 	return MessageUnknownType, 0
