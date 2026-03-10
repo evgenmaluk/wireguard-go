@@ -6,7 +6,6 @@
 package device
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
@@ -48,11 +47,15 @@ import (
  */
 
 type QueueOutboundElement struct {
-	buffer  *[MaxMessageSize]byte // slice holding the packet data
-	packet  []byte                // slice of "buffer" (always!)
-	nonce   uint64                // nonce for encryption
-	keypair *Keypair              // keypair for encryption
-	peer    *Peer                 // related peer
+	buffer *[MaxMessageSize]byte // slice holding the packet data
+	// packet is always a slice of "buffer". The starting offset in buffer
+	// is either:
+	//  a) MessageEncapsulatingTransportSize+MessageTransportHeaderSize (plaintext)
+	//  b) 0 (post-encryption)
+	packet  []byte
+	nonce   uint64   // nonce for encryption
+	keypair *Keypair // keypair for encryption
+	peer    *Peer    // related peer
 }
 
 type QueueOutboundElementsContainer struct {
@@ -149,10 +152,9 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 		sendBuffer = append(sendBuffer, buf)
 	}
 
-	var buf [MessageInitiationSize]byte
-	writer := bytes.NewBuffer(buf[:0])
-	binary.Write(writer, binary.LittleEndian, msg)
-	packet := writer.Bytes()
+	buf := make([]byte, MessageEncapsulatingTransportSize+MessageInitiationSize)
+	packet := buf[MessageEncapsulatingTransportSize:]
+	_ = msg.marshal(packet)
 	peer.cookieGenerator.AddMacs(packet)
 
 	peer.timersAnyAuthenticatedPacketTraversal()
@@ -189,11 +191,9 @@ func (peer *Peer) SendHandshakeResponse() error {
 		return err
 	}
 
-	var buf [MessageResponseSize]byte
-	writer := bytes.NewBuffer(buf[:0])
-
-	binary.Write(writer, binary.LittleEndian, response)
-	packet := writer.Bytes()
+	buf := make([]byte, MessageEncapsulatingTransportSize+MessageResponseSize)
+	packet := buf[MessageEncapsulatingTransportSize:]
+	_ = response.marshal(packet)
 	peer.cookieGenerator.AddMacs(packet)
 
 	err = peer.BeginSymmetricSession()
@@ -214,7 +214,7 @@ func (peer *Peer) SendHandshakeResponse() error {
 	}
 
 	// TODO: allocation could be avoided
-	err = peer.SendBuffers([][]byte{packet})
+	err = peer.SendBuffers([][]byte{buf})
 	if err != nil {
 		peer.device.log.Errorf("%v - Failed to send handshake response: %v", peer, err)
 	}
@@ -238,10 +238,9 @@ func (device *Device) SendHandshakeCookie(initiatingElem *QueueHandshakeElement)
 		return err
 	}
 
-	var buf [MessageCookieReplySize]byte
-	writer := bytes.NewBuffer(buf[:0])
-	binary.Write(writer, binary.LittleEndian, reply)
-	packet := writer.Bytes()
+	buf := make([]byte, MessageEncapsulatingTransportSize+MessageCookieReplySize)
+	packet := buf[MessageEncapsulatingTransportSize:]
+	_ = reply.marshal(packet)
 
 	if padding := device.paddings.cookie; padding > 0 {
 		buf := make([]byte, padding+len(packet))
@@ -251,7 +250,7 @@ func (device *Device) SendHandshakeCookie(initiatingElem *QueueHandshakeElement)
 	}
 
 	// TODO: allocation could be avoided
-	device.net.bind.Send([][]byte{packet}, initiatingElem.endpoint)
+	device.net.bind.Send([][]byte{buf}, initiatingElem.endpoint, MessageEncapsulatingTransportSize)
 	return nil
 }
 
@@ -283,7 +282,7 @@ func (device *Device) RoutineReadFromTUN() {
 		elemsByPeer = make(map[*Peer]*QueueOutboundElementsContainer, batchSize)
 		count       = 0
 		sizes       = make([]int, batchSize)
-		offset      = MessageTransportHeaderSize
+		offset      = MessageEncapsulatingTransportSize + MessageTransportHeaderSize
 	)
 
 	for i := range elems {
@@ -533,7 +532,7 @@ func (device *Device) RoutineEncryption(id int) {
 	for elemsContainer := range device.queue.encryption.c {
 		for _, elem := range elemsContainer.elems {
 			// populate header fields
-			header := elem.buffer[:MessageTransportHeaderSize]
+			header := elem.buffer[MessageEncapsulatingTransportSize : MessageEncapsulatingTransportSize+MessageTransportHeaderSize]
 
 			fieldType := header[0:4]
 			fieldReceiver := header[4:8]
@@ -558,6 +557,9 @@ func (device *Device) RoutineEncryption(id int) {
 				elem.packet,
 				nil,
 			)
+
+			// re-slice packet to include encapsulating transport space
+			elem.packet = elem.buffer[:MessageEncapsulatingTransportSize+len(elem.packet)]
 		}
 		elemsContainer.Unlock()
 	}
@@ -596,7 +598,7 @@ func (peer *Peer) RoutineSequentialSender(maxBatchSize int) {
 		dataSent := false
 		elemsContainer.Lock()
 		for _, elem := range elemsContainer.elems {
-			if len(elem.packet) != MessageKeepaliveSize {
+			if len(elem.packet[MessageEncapsulatingTransportSize:]) != MessageKeepaliveSize {
 				dataSent = true
 
 				if padding := device.paddings.transport; padding > 0 {
