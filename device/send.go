@@ -156,19 +156,19 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 	packet := buf[MessageEncapsulatingTransportSize:]
 	_ = msg.marshal(packet)
 	peer.cookieGenerator.AddMacs(packet)
-	packet = buf
 
 	peer.timersAnyAuthenticatedPacketTraversal()
 	peer.timersAnyAuthenticatedPacketSent()
 
 	if padding := peer.device.paddings.init; padding > 0 {
-		buf := make([]byte, padding+len(packet))
-		rand.Read(buf[:padding])
-		copy(buf[padding:], packet)
-		packet = buf
+		buf2 := make([]byte, padding+len(buf))
+		packet2 := buf2[MessageEncapsulatingTransportSize:]
+		rand.Read(packet2[:padding])
+		copy(packet2[padding:], packet)
+		buf = buf2
 	}
 
-	sendBuffer = append(sendBuffer, packet)
+	sendBuffer = append(sendBuffer, buf)
 
 	err = peer.SendBuffers(sendBuffer)
 	if err != nil {
@@ -196,7 +196,6 @@ func (peer *Peer) SendHandshakeResponse() error {
 	packet := buf[MessageEncapsulatingTransportSize:]
 	_ = response.marshal(packet)
 	peer.cookieGenerator.AddMacs(packet)
-	packet = buf
 
 	err = peer.BeginSymmetricSession()
 	if err != nil {
@@ -209,14 +208,15 @@ func (peer *Peer) SendHandshakeResponse() error {
 	peer.timersAnyAuthenticatedPacketSent()
 
 	if padding := peer.device.paddings.response; padding > 0 {
-		buf := make([]byte, padding+len(packet))
-		rand.Read(buf[:padding])
-		copy(buf[padding:], packet)
-		packet = buf
+		buf2 := make([]byte, padding+len(buf))
+		packet2 := buf2[MessageEncapsulatingTransportSize:]
+		rand.Read(packet2[:padding])
+		copy(packet2[padding:], packet)
+		buf = buf2
 	}
 
 	// TODO: allocation could be avoided
-	err = peer.SendBuffers([][]byte{packet})
+	err = peer.SendBuffers([][]byte{buf})
 	if err != nil {
 		peer.device.log.Errorf("%v - Failed to send handshake response: %v", peer, err)
 	}
@@ -243,17 +243,17 @@ func (device *Device) SendHandshakeCookie(initiatingElem *QueueHandshakeElement)
 	buf := make([]byte, MessageEncapsulatingTransportSize+MessageCookieReplySize)
 	packet := buf[MessageEncapsulatingTransportSize:]
 	_ = reply.marshal(packet)
-	packet = buf
 
 	if padding := device.paddings.cookie; padding > 0 {
-		buf := make([]byte, padding+len(packet))
-		rand.Read(buf[:padding])
-		copy(buf[padding:], packet)
-		packet = buf
+		buf2 := make([]byte, padding+len(buf))
+		packet2 := buf2[MessageEncapsulatingTransportSize:]
+		rand.Read(packet2[:padding])
+		copy(packet2[padding:], packet)
+		buf = buf2
 	}
 
 	// TODO: allocation could be avoided
-	device.net.bind.Send([][]byte{packet}, initiatingElem.endpoint, MessageEncapsulatingTransportSize)
+	device.net.bind.Send([][]byte{buf}, initiatingElem.endpoint, MessageEncapsulatingTransportSize)
 	return nil
 }
 
