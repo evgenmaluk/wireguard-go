@@ -133,8 +133,9 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 
 	for _, ipacket := range peer.device.ipackets {
 		if ipacket != nil {
-			buf := make([]byte, ipacket.ObfuscatedLen(0))
-			ipacket.Obfuscate(buf, nil)
+			buf := make([]byte, MessageEncapsulatingTransportSize+ipacket.ObfuscatedLen(0))
+			packet := buf[MessageEncapsulatingTransportSize:]
+			ipacket.Obfuscate(packet, nil)
 			sendBuffer = append(sendBuffer, buf)
 		}
 	}
@@ -147,8 +148,9 @@ func (peer *Peer) SendHandshakeInitiation(isRetry bool) error {
 		nBig, _ := rand.Int(rand.Reader, big.NewInt(int64(jmax-jmin+1)))
 		n := int(nBig.Int64()) + jmin
 
-		buf := make([]byte, n)
-		rand.Read(buf)
+		buf := make([]byte, MessageEncapsulatingTransportSize+n)
+		packet := buf[MessageEncapsulatingTransportSize:]
+		rand.Read(packet)
 		sendBuffer = append(sendBuffer, buf)
 	}
 
