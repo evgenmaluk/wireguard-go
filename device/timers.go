@@ -40,7 +40,27 @@ func (peer *Peer) NewTimer(expirationFunction func(*Peer)) *Timer {
 		timer.modifyingLock.Unlock()
 
 		if pauseManager := peer.device.pauseManager; pauseManager != nil {
-			pauseManager.WaitActive()
+			// 2-second timeout (2026-04-25, polyanka audit). The
+			// iOS NetworkExtension pause path can deadlock when
+			// the host process is killed between Swift calling
+			// Pause() on the manager and Wake() never landing —
+			// devicePause / networkPause channels stay
+			// permanently un-signaled. Without a timeout, all 5
+			// peer timers (retransmit, keepalive, newHandshake,
+			// zeroKeyMaterial, persistentKeepalive) block on
+			// WaitActive forever; the session looks alive but no
+			// keepalive ever fires. Better to run
+			// expirationFunction on a supposedly-paused device
+			// than freeze the timer goroutines.
+			done := make(chan struct{})
+			go func() {
+				pauseManager.WaitActive()
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+			}
 		}
 		expirationFunction(peer)
 	})
