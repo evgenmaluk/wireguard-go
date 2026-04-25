@@ -610,11 +610,16 @@ func (device *Device) DeterminePacketTypeAndPadding(packet []byte, expectedType 
 			}
 		}
 
-		if padding > 0 && size >= MessageTransportHeaderSize {
-			if header.Validate(binary.LittleEndian.Uint32(packet)) {
-				return MessageTransportType, 0
-			}
-		}
+		// Removed (2026-04-25, polyanka audit): the padding>0 stray
+		// transport fallback misclassified ~50% of legitimate AWG 2.0
+		// transport packets when H4 is a wide uint32 range, returning
+		// padding=0 instead of the configured value → MessageTransportOffsetReceiver
+		// shifted → indexTable lookup failed → packet silently dropped.
+		// Enough drops advanced anti-replay past real counter and every
+		// legitimate packet rejected. Session 'up', no traffic. This
+		// block was removed in canonical amneziawg-go PR #103 (2025-12);
+		// never backported here until now. Range validation in the
+		// primary block above is sufficient.
 	}
 
 	return MessageUnknownType, 0
